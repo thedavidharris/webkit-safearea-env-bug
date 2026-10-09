@@ -1,0 +1,133 @@
+<html>
+	<head>
+		<meta
+			name="viewport"
+			content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+		/>
+		<style>
+			:root {
+				--inset-top: max(env(safe-area-inset-top), var(--native-safe-area-inset-top, 0px));
+				--inset-right: max(env(safe-area-inset-right), var(--native-safe-area-inset-right, 0px));
+				--inset-bottom: max(env(safe-area-inset-bottom), var(--native-safe-area-inset-bottom, 0px));
+				--inset-left: max(env(safe-area-inset-left), var(--native-safe-area-inset-left, 0px));
+				font: 16px -apple-system, sans-serif;
+			}
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+			}
+			/* Starts at y=0 behind the nav bar; only its text respects the inset. */
+			.hero {
+				position: relative;
+				box-sizing: border-box;
+				height: calc(var(--inset-top) + 260px);
+				padding: var(--inset-top) calc(var(--inset-right) + 16px) 16px calc(var(--inset-left) + 16px);
+				background: linear-gradient(160deg, #1d3cff, #b14fff 60%, #ff7a59);
+				color: white;
+				display: flex;
+				flex-direction: column;
+				justify-content: space-between;
+			}
+			/* Should sit flush with the bottom of the nav bar. */
+			.hero::before {
+				content: "";
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: var(--inset-top);
+				border-top: 2px dashed rgb(255 255 255 / 0.8);
+			}
+			.hero-kicker {
+				padding-top: 8px;
+				font-size: 13px;
+				text-transform: uppercase;
+				letter-spacing: 0.08em;
+			}
+			.hero-title {
+				font-size: 32px;
+				font-weight: 700;
+			}
+			main {
+				padding-left: var(--inset-left);
+				padding-right: var(--inset-right);
+				padding-bottom: calc(var(--inset-bottom) + 140px);
+			}
+			.row {
+				height: 64px;
+				display: flex;
+				align-items: center;
+				padding: 0 16px;
+			}
+			.row:nth-child(odd) {
+				background: hsl(210 60% 96%);
+			}
+			#diagnostics {
+				position: fixed;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				padding: 8px calc(var(--inset-right) + 12px) calc(var(--inset-bottom) + 8px) calc(var(--inset-left) + 12px);
+				background: rgb(0 0 0 / 0.78);
+				color: white;
+				font: 11px ui-monospace, monospace;
+				white-space: pre;
+				-webkit-backdrop-filter: blur(12px);
+			}
+		</style>
+	</head>
+	<body>
+		<header class="hero">
+			<div class="hero-kicker">Below the nav bar</div>
+			<div class="hero-title">Full bleed hero</div>
+		</header>
+		<main id="main"></main>
+		<div id="diagnostics"></div>
+		<script>
+			const edges = ["top", "bottom", "left", "right"]
+			const probe = document.createElement("div")
+			probe.style.cssText = "position: absolute; visibility: hidden; width: 0"
+			document.documentElement.appendChild(probe)
+
+			function read(expression) {
+				return edges
+					.map((edge) => {
+						probe.style.paddingLeft = expression(edge)
+						return edge[0] + probe.offsetWidth
+					})
+					.join(" ")
+			}
+			const measureEnv = () => read((edge) => "env(safe-area-inset-" + edge + ")")
+			const measureNative = () => read((edge) => "var(--native-safe-area-inset-" + edge + ", 0px)")
+
+			const snapshots = []
+			function snapshot(event) {
+				const env = measureEnv()
+				const native = measureNative()
+				snapshots.push(event.padEnd(8) + "env " + env + " | native " + native)
+				window.webkit?.messageHandlers?.probe?.postMessage({ event, env, native })
+			}
+
+			snapshot("initial")
+			requestAnimationFrame(() => snapshot("frame"))
+			document.addEventListener("DOMContentLoaded", () => snapshot("dom"))
+			window.addEventListener("load", () => snapshot("load"))
+
+			const diagnostics = document.getElementById("diagnostics")
+			function render() {
+				const live = "live    env " + measureEnv() + " | native " + measureNative()
+				diagnostics.textContent = [live, ...snapshots].join("\n")
+				requestAnimationFrame(render)
+			}
+			requestAnimationFrame(render)
+
+			const main = document.getElementById("main")
+			for (let i = 1; i <= 80; i++) {
+				const row = document.createElement("div")
+				row.className = "row"
+				row.textContent = "Row " + i
+				main.appendChild(row)
+			}
+		</script>
+	</body>
+</html>
