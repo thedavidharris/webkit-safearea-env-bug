@@ -19,7 +19,7 @@ struct ContentView: View {
                 NavigationLink("Open WebView", value: pageURL).buttonStyle(.borderedProminent)
             }
             .background(WindowReader { window in
-                if strategy.prewarms { pool.warm(origin: pageURL, in: window) }
+                if strategy.prewarms { pool.warm(origin: pageURL, in: window, priming: strategy.preloadsPriming) }
             })
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: URL.self) { url in
@@ -53,6 +53,33 @@ struct WebViewScreen: View {
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar(isNavigationBarHidden ? .hidden : .visible, for: .navigationBar)
             .animation(.default, value: isNavigationBarHidden)
+            .task { await perturb() }
+    }
+
+    // Harness hook: change geometry while the destination is loading.
+    private func perturb() async {
+        let defaults = UserDefaults.standard
+        guard let kind = defaults.string(forKey: "perturb") else { return }
+        let delay = defaults.double(forKey: "perturbDelay")
+        do { try await Task.sleep(for: .seconds(delay.isFinite ? max(0, delay) : 0)) } catch { return }
+        switch kind {
+        case "rotate":
+            // UIKit rejects rotation during the push transition; retry the way a deferred device rotation lands.
+            guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+            for attempt in 1...60 {
+                if scene.effectiveGeometry.interfaceOrientation.isLandscape {
+                    print("PROBE {\"event\":\"perturb-rotated\",\"attempts\":\(attempt - 1)}")
+                    return
+                }
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { _ in }
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+            }
+            print("PROBE {\"event\":\"perturb-failed\"}")
+        case "hideBar":
+            isNavigationBarHidden = true
+        default:
+            break
+        }
     }
 }
 

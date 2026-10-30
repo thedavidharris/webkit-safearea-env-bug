@@ -3,14 +3,17 @@ import WebKit
 
 // Priming is an experiment, not an initial-layout guarantee.
 enum LoadStrategy: String {
-    case none, inject, prewarm, both, prime
+    case none, inject, prewarm, both, prime, preprime
+    case preprimeInject = "preprime-inject"
 
     static var current: LoadStrategy {
         UserDefaults.standard.string(forKey: "strategy").flatMap(LoadStrategy.init) ?? .inject
     }
 
-    var injectsSafeAreaInsets: Bool { self == .inject || self == .both }
-    var prewarms: Bool { self == .prewarm || self == .both }
+    var injectsSafeAreaInsets: Bool { self == .inject || self == .both || self == .preprimeInject }
+    var prewarms: Bool { self == .prewarm || self == .both || preloadsPriming }
+    var primes: Bool { self == .prime || preloadsPriming }
+    var preloadsPriming: Bool { self == .preprime || self == .preprimeInject }
 }
 
 @MainActor
@@ -29,7 +32,7 @@ struct WebView: UIViewRepresentable {
         webView.probe = context.coordinator.probe
         webView.scrollView.delegate = context.coordinator
         webView.publishesSafeAreaInsets = strategy.injectsSafeAreaInsets
-        webView.loadWhenAttached(URLRequest(url: url), prime: strategy == .prime)
+        webView.loadWhenAttached(URLRequest(url: url), prime: strategy.primes)
         return webView
     }
 
@@ -116,6 +119,7 @@ final class InsetAwareWebView: WKWebView, WKNavigationDelegate {
     private var shouldPrime = false
     private var primingRequest: URLRequest?
     private var primingID: String?
+    private var preloadedPrimingID: String?
     private var primingMatches = 0
     private var primingInsets: UIEdgeInsets?
     private var primingTimeout: Task<Void, Never>?
@@ -261,19 +265,37 @@ final class InsetAwareWebView: WKWebView, WKNavigationDelegate {
         navigationGeneration += 1
         documentID = nil
         probe?.record("process-terminated")
+        preloadedPrimingID = nil
         if primingRequest != nil { finishPriming("prime-process-terminated") }
         else { reload() } // Demo recovery policy; app integrations should choose their own.
     }
 
+    // The bootstrap keeps sampling, so a preloaded document only needs to agree with the destination's geometry.
+    func preloadPrimingDocument(baseURL: URL) {
+        preloadedPrimingID = loadPrimingDocument(baseURL: baseURL)
+    }
+
+    private func loadPrimingDocument(baseURL: URL?) -> String {
+        let id = UUID().uuidString
+        let html = Self.primingHTML.replacingOccurrences(of: "__PRIMING_ID_JSON__", with: json(id))
+        loadHTMLString(html, baseURL: baseURL)
+        return id
+    }
+
     private func beginPriming(_ request: URLRequest) {
         primingRequest = request
-        let id = UUID().uuidString
-        primingID = id
         primingMatches = 0
         primingInsets = nil
-        probe?.record("prime-start")
-        let html = Self.primingHTML.replacingOccurrences(of: "__PRIMING_ID_JSON__", with: json(id))
-        loadHTMLString(html, baseURL: request.url)
+        let id: String
+        if let preloaded = preloadedPrimingID {
+            id = preloaded
+            probe?.record("prime-start", fields: ["preloaded": true])
+        } else {
+            probe?.record("prime-start", fields: ["preloaded": false])
+            id = loadPrimingDocument(baseURL: request.url)
+        }
+        preloadedPrimingID = nil
+        primingID = id
         let configured = UserDefaults.standard.double(forKey: "primeTimeout")
         let timeout = configured > 0 && configured.isFinite ? min(configured, 30) : 3
         primingTimeout = Task { [weak self] in
@@ -323,19 +345,20 @@ final class InsetAwareWebView: WKWebView, WKNavigationDelegate {
     }
 }
 
-// Owned by one ContentView/scene. Empty HTML deliberately remains the process-only control.
+// Owned by one ContentView/scene. Empty HTML is the process-only control; preprime loads the bootstrap.
 @MainActor
 final class WebViewPool {
     private var warmWebView: InsetAwareWebView?
 
-    func warm(origin: URL, in window: UIWindow) {
+    func warm(origin: URL, in window: UIWindow, priming: Bool) {
         guard warmWebView == nil else { return }
         let webView = Self.makeWebView()
         webView.frame = window.bounds
         webView.alpha = 0
         webView.isUserInteractionEnabled = false
         window.insertSubview(webView, at: 0)
-        webView.loadHTMLString("", baseURL: origin)
+        if priming { webView.preloadPrimingDocument(baseURL: origin) }
+        else { webView.loadHTMLString("", baseURL: origin) }
         warmWebView = webView
     }
 
