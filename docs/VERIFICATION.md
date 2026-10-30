@@ -23,6 +23,21 @@ Times are the native milliseconds from destination coordinator creation to the p
 | both | 12 | top 0 in 12/12 | equals native in 12/12 | 462 (72-860) | none | n/a |
 | prime | 17 | correct in 17/17 | correct in 17/17 | 1057 (943-3528), includes bootstrap | none | 17/17 `prime-ready` |
 
+### Pre-priming
+
+A separate set of 30 cold launches compared `both`, `prime` and `preprime`, 5 runs each at 1 s and 0 s push delays.
+
+| Strategy | Push delay | Initial `env()` | Initial checkpoint ms, median (min-max) | Priming |
+|---|---:|---|---|---|
+| both | 1 s | top 0 in 5/5 (effective correct) | 82 (61-2491) | n/a |
+| prime | 1 s | correct in 5/5 | 988 (897-2150) | 5/5 `prime-ready` |
+| preprime | 1 s | correct in 5/5 | 110 (96-171) | 5/5 `prime-ready`, preloaded |
+| both | 0 s | top 0 in 5/5 (effective correct) | 471 (449-539) | n/a |
+| prime | 0 s | correct in 5/5 | 904 (883-1053) | 5/5 `prime-ready` |
+| preprime | 0 s | correct in 5/5 | 819 (765-839) | 5/5 `prime-ready`, preloaded |
+
+With a 1 s delay `preprime` reached `prime-ready` 86-124 ms after coordinator creation (52-69 ms after priming began), and `env()` top stayed 116 at every later checkpoint (`dom`, `load`, `pageshow`, `frame`). With no delay the bootstrap had not loaded, so `prime-ready` took 754-826 ms, including process startup. No video was recorded for this set.
+
 In `none` and `prewarm` the correction lands after the first animation frame, which is the visible jump. Videos were recorded but not reviewed frame by frame.
 
 ## Interactive results (`inject`)
@@ -50,7 +65,8 @@ Effective insets equalled native insets at all 50 probe checkpoints in one sessi
 - iPad rotation and resizing
 - WebContent process termination and recovery
 - Early consumer and unrelated user scripts alongside the bootstrap script
-- `prime` during rotation or bar transitions
+- `prime` or `preprime` during rotation or bar transitions
+- `preprime` after WebContent termination in the pool
 - Frame-by-frame video review
 
 ## Reproduce
@@ -64,6 +80,8 @@ AUTO_PUSH_DELAY=0 scripts/benchmark.sh "$SIMULATOR_ID" 5 benchmark-results/immed
 RECORD_VIDEO=1 scripts/benchmark.sh "$SIMULATOR_ID" 2 benchmark-results/video
 STRATEGIES='inject prime' RUN_SECONDS=15 RECORD_VIDEO=1 \
   scripts/benchmark.sh "$SIMULATOR_ID" 5 benchmark-results/focused
+STRATEGIES='both prime preprime' scripts/benchmark.sh "$SIMULATOR_ID" 5 benchmark-results/preprime-baseline
+AUTO_PUSH_DELAY=0 STRATEGIES='both prime preprime' scripts/benchmark.sh "$SIMULATOR_ID" 5 benchmark-results/preprime-immediate
 ```
 
 Each result folder holds `environment.txt`, `working-tree.diff`, `build.log`, full JSON `PROBE` logs, end-of-run screenshots, optional video and `summary.md`. `scripts/summarize.py <folder>` regenerates the summary. Override `STRATEGIES`, `AUTO_PUSH_DELAY`, `RUN_SECONDS`, `PRIME_TIMEOUT`, `PAGE_URL` or `RECORD_VIDEO` as needed; `RUN_SECONDS` must exceed push delay plus priming timeout plus 2.

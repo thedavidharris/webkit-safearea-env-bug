@@ -19,7 +19,7 @@ struct ContentView: View {
                 NavigationLink("Open WebView", value: pageURL).buttonStyle(.borderedProminent)
             }
             .background(WindowReader { window in
-                if strategy.prewarms { pool.warm(origin: pageURL, in: window) }
+                if strategy.prewarms { pool.warm(origin: pageURL, in: window, priming: strategy == .preprime) }
             })
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: URL.self) { url in

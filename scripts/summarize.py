@@ -41,7 +41,7 @@ def summarize(folder):
         initial = [e for e in events if e.get('event') == 'initial']
         outcomes = [e['event'] for e in events if e.get('event') in {
             'prime-ready', 'prime-timeout', 'prime-failed', 'prime-process-terminated'}]
-        outcome = outcomes[-1] if outcomes else ('NO OUTCOME' if any(e.get('strategy') == 'prime' for e in events) else 'n/a')
+        outcome = outcomes[-1] if outcomes else ('NO OUTCOME' if any(e.get('strategy') in {'prime', 'preprime'} for e in events) else 'n/a')
         errors = sum(e.get('event') in {'bridge-error', 'navigation-error', 'process-terminated', 'invalid-probe'} for e in events)
         if not initial:
             lines.append(f'| {log.name} | MISSING INITIAL PROBE | — | — | — | — | — | {outcome} | {errors} |')

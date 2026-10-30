@@ -10,7 +10,7 @@ PAGE_URL="${PAGE_URL:-http://localhost:8000}"
 AUTO_PUSH_DELAY="${AUTO_PUSH_DELAY:-1}"
 RUN_SECONDS="${RUN_SECONDS:-10}"
 PRIME_TIMEOUT="${PRIME_TIMEOUT:-3}"
-STRATEGIES="${STRATEGIES:-none inject prewarm both prime}"
+STRATEGIES="${STRATEGIES:-none inject prewarm both prime preprime}"
 RECORD_VIDEO="${RECORD_VIDEO:-0}"
 APP_ID=Chet-Corcos.WebViewBug
 case "$RUNS" in ''|*[!0-9]*|0) echo 'Runs must be a positive integer' >&2; exit 1;; esac
@@ -23,7 +23,7 @@ assert delay >= 0 and 0 < timeout <= 30, 'Invalid delay or prime timeout'
 assert duration > delay + timeout + 2, 'RUN_SECONDS must leave at least 2s after push + priming timeout'
 PY
 for strategy in $STRATEGIES; do
-  case "$strategy" in none|inject|prewarm|both|prime) ;; *) echo "Unknown strategy: $strategy" >&2; exit 1;; esac
+  case "$strategy" in none|inject|prewarm|both|prime|preprime) ;; *) echo "Unknown strategy: $strategy" >&2; exit 1;; esac
 done
 if ! curl -fsS -o /dev/null "$PAGE_URL"; then
   echo "Start the page server: python3 -m http.server 8000" >&2

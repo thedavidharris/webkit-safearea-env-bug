@@ -8,6 +8,7 @@ On an iOS 27.2 iPhone simulator, `env(safe-area-inset-*)` reads 0 at the first s
 
 - `inject` (the default) fixes the layout. Native insets are installed as CSS custom properties at document start; effective insets matched native at every probe checkpoint across first load, bar hide/show, rotation, navigation, history and reopen.
 - `prime` fixes `env()` itself by loading a `viewport-fit=cover` bootstrap first, but adds about 400 ms before the destination page's first script runs. Experimental.
+- `preprime` loads that bootstrap in the prewarmed web view before the tap. `env()` was correct at the first checkpoint, with the first script about 100 ms after the push when the bootstrap had time to load. Experimental.
 - `prewarm` shortens time to the destination's first script but does not fix the insets.
 
 Full results and untested cases: [docs/VERIFICATION.md](docs/VERIFICATION.md).
@@ -32,6 +33,7 @@ Launch arguments (Xcode scheme or `simctl launch`):
 | `-strategy prewarm` | Reuse a web view warmed with empty HTML; no injection. Process-startup control. |
 | `-strategy both` | Empty-page prewarming plus injection. |
 | `-strategy prime` | In the destination container, load a `viewport-fit=cover` bootstrap, wait for measured inset agreement, then navigate. Experimental; no injection. |
+| `-strategy preprime` | Prewarm with the bootstrap instead of empty HTML; after attachment, wait for agreement with the destination's geometry, then navigate. Experimental; no injection. |
 | `-autoPush YES` | Open the destination automatically. |
 | `-autoPushDelay 1` | Seconds before automatic push; use `0` to test immediate navigation. |
 | `-primeTimeout 3` | Priming deadline in seconds (maximum 30). Timeout/failure logs its outcome and loads the target normally. |
@@ -88,13 +90,19 @@ The pool is a small demonstration, not a general production pool. Account for co
 
 `prime` loads the bundled `priming.html` in the destination web view. It declares `viewport-fit=cover` and samples real CSS `env()` values on animation frames. Native checks agreement against the destination's current geometry, then loads the target. A three-second default deadline prevents an indefinite wait.
 
-This pays a bootstrap navigation on the critical path. Pre-priming before a tap is a separate future experiment and needs representative destination geometry. A `prime-ready` event only describes the bootstrap; inspect the real page's checkpoints and presentation separately. A timeout/failure falls back to ordinary navigation and must never be reported as successful priming.
+This pays a bootstrap navigation on the critical path. A `prime-ready` event only describes the bootstrap; inspect the real page's checkpoints and presentation separately. A timeout/failure falls back to ordinary navigation and must never be reported as successful priming.
 
-### 4. Delay presentation
+### 4. Pre-prime in the warm pool
+
+`preprime` warms the pooled web view with the same bootstrap. The pool's geometry is not the destination's, so the destination does not trust the warm state: it reuses the live bootstrap document, which keeps sampling, and navigates only after two samples agree with its own insets. The bootstrap navigation leaves the critical path; the geometry check stays on it. If the bootstrap has not loaded by the push, the wait includes process startup and the bootstrap load, so it degrades towards `prime`. Process termination in the pool discards the preloaded state and falls back to a fresh bootstrap.
+
+The same pool caveats apply. Run inject alongside it if a late geometry change must never show up as a jump.
+
+### 5. Delay presentation
 
 `load`/`didFinish`/a fixed delay are not safe-area readiness signals. A measured-readiness gate could be a fallback for unmodifiable content, with a deadline and loading UI. It is not implemented here and would need to keep the web view participating in rendering. Valid zero insets must be allowed.
 
-### 5. Upstream WebKit fix
+### 6. Upstream WebKit fix
 
 [`WebPageCreationParameters.h`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/Shared/WebPageCreationParameters.h) lacks initial safe-area geometry. Adding it may help, but populating it from `_computedUnobscuredSafeAreaInset` alone can still copy zero under the initial policy.
 
