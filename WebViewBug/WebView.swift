@@ -4,14 +4,16 @@ import WebKit
 // Priming is an experiment, not an initial-layout guarantee.
 enum LoadStrategy: String {
     case none, inject, prewarm, both, prime, preprime
+    case preprimeInject = "preprime-inject"
 
     static var current: LoadStrategy {
         UserDefaults.standard.string(forKey: "strategy").flatMap(LoadStrategy.init) ?? .inject
     }
 
-    var injectsSafeAreaInsets: Bool { self == .inject || self == .both }
-    var prewarms: Bool { self == .prewarm || self == .both || self == .preprime }
-    var primes: Bool { self == .prime || self == .preprime }
+    var injectsSafeAreaInsets: Bool { self == .inject || self == .both || self == .preprimeInject }
+    var prewarms: Bool { self == .prewarm || self == .both || preloadsPriming }
+    var primes: Bool { self == .prime || preloadsPriming }
+    var preloadsPriming: Bool { self == .preprime || self == .preprimeInject }
 }
 
 @MainActor

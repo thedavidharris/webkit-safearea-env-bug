@@ -8,7 +8,9 @@ On an iOS 27.2 iPhone simulator, `env(safe-area-inset-*)` reads 0 at the first s
 
 - `inject` (the default) fixes the layout. Native insets are installed as CSS custom properties at document start; effective insets matched native at every probe checkpoint across first load, bar hide/show, rotation, navigation, history and reopen.
 - `prime` fixes `env()` itself by loading a `viewport-fit=cover` bootstrap first, but adds about 400 ms before the destination page's first script runs. Experimental.
-- `preprime` loads that bootstrap in the prewarmed web view before the tap. `env()` was correct at the first checkpoint, with the first script about 100 ms after the push when the bootstrap had time to load. Experimental.
+- `preprime` loads that bootstrap in the prewarmed web view before the tap. `env()` was correct at the first checkpoint in every run, including during rotation, bar hiding and after the pool's process was killed. The first script ran about 100 ms after the push when the bootstrap had loaded in time; otherwise the push waits for it. Experimental.
+
+See [Recommendations](#recommendations).
 - `prewarm` shortens time to the destination's first script but does not fix the insets.
 
 Full results and untested cases: [docs/VERIFICATION.md](docs/VERIFICATION.md).
@@ -34,10 +36,13 @@ Launch arguments (Xcode scheme or `simctl launch`):
 | `-strategy both` | Empty-page prewarming plus injection. |
 | `-strategy prime` | In the destination container, load a `viewport-fit=cover` bootstrap, wait for measured inset agreement, then navigate. Experimental; no injection. |
 | `-strategy preprime` | Prewarm with the bootstrap instead of empty HTML; after attachment, wait for agreement with the destination's geometry, then navigate. Experimental; no injection. |
+| `-strategy preprime-inject` | `preprime` plus injection. |
 | `-autoPush YES` | Open the destination automatically. |
 | `-autoPushDelay 1` | Seconds before automatic push; use `0` to test immediate navigation. |
 | `-primeTimeout 3` | Priming deadline in seconds (maximum 30). Timeout/failure logs its outcome and loads the target normally. |
 | `-pageURL http://localhost:8000` | Test page address; override for a physical device or alternate test server. |
+| `-perturb rotate` or `-perturb hideBar` | Harness hook: rotate to landscape or hide the navigation bar after the destination appears. Rotation retries every 50 ms because UIKit rejects it during the push transition. |
+| `-perturbDelay 0` | Seconds after the destination appears before perturbing. |
 
 `prime` accepts zero insets and requires two samples within 0.5 CSS px of unchanged native geometry on all four edges. This is a readiness observation, not a guarantee that the next navigation will preserve the state. Reparenting, policy changes and process replacement can invalidate it.
 
@@ -96,7 +101,7 @@ This pays a bootstrap navigation on the critical path. A `prime-ready` event onl
 
 `preprime` warms the pooled web view with the same bootstrap. The pool's geometry is not the destination's, so the destination does not trust the warm state: it reuses the live bootstrap document, which keeps sampling, and navigates only after two samples agree with its own insets. The bootstrap navigation leaves the critical path; the geometry check stays on it. If the bootstrap has not loaded by the push, the wait includes process startup and the bootstrap load, so it degrades towards `prime`. Process termination in the pool discards the preloaded state and falls back to a fresh bootstrap.
 
-The same pool caveats apply. Run inject alongside it if a late geometry change must never show up as a jump.
+The readiness wait is required: navigating without it read `env()` 0 on the first load in 4 of 8 runs. The benefit depends on the bootstrap having loaded before the push, which took more than a second in some cold launches; warm at app launch, not on the entry screen. The same pool caveats apply, and an app integration should re-warm after dequeuing (the demo warms once).
 
 ### 5. Delay presentation
 
@@ -107,6 +112,18 @@ The same pool caveats apply. Run inject alongside it if a late geometry change m
 [`WebPageCreationParameters.h`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/Shared/WebPageCreationParameters.h) lacks initial safe-area geometry. Adding it may help, but populating it from `_computedUnobscuredSafeAreaInset` alone can still copy zero under the initial policy.
 
 A patch must coordinate early host geometry and the document's viewport policy without waiting for a rendering round trip, and handle later attachment, navigation and process replacement. Independent inset IPC might reduce deferral but does not alone guarantee ordering before first layout. Add TestWebKitAPI coverage for an early inline read after the viewport declaration, policy transitions, inset decreases and process changes. No upstream patch has been implemented or validated here. Private WebKit setters are not an app-level solution.
+
+## Recommendations
+
+Pick by who owns the CSS. Each option is one mechanism, not a stack.
+
+1. Content you own: `inject`. One user script and one message handler, no extra navigation, no pool. Effective insets matched native at every checkpoint, including transitions. The cost is that CSS reads `--inset-*` tokens instead of `env()`.
+2. You need real `env()` (third-party CSS, iframes, or pages you will not migrate): `preprime`. Keep exactly one primed web view, warmed at app launch and re-warmed after each dequeue, with the readiness wait and its timeout. Measured first loads were correct with no visible jump. Cost: one idle web view, about 100 lines of Swift for the pool and handshake, and a 20-line bootstrap page.
+3. Add `inject` to `preprime` only if the timeout path shows up in practice. It covers the case where priming times out and `env()` is 0, and settles slightly faster during rotation (7-10 ms vs 15-31 ms), but it doubles the mechanisms to maintain. On the simulator it gave no measured benefit otherwise.
+
+Avoid: `prime` (adds about 400 ms to every push for the same result as `preprime`), `prewarm` alone (faster but still jumps), a fixed delay or `didFinish` as readiness, and skipping the readiness wait.
+
+Before shipping either option, validate on a physical device and the minimum supported OS; neither was tested here.
 
 ## Measurements and their limits
 

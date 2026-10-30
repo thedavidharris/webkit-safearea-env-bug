@@ -28,6 +28,20 @@ class SummaryTests(unittest.TestCase):
             self.assertIn('0/0/0/0', report)
             self.assertNotIn('MISSING INITIAL PROBE', report)
 
+    def test_settle_measures_from_last_native_change(self):
+        portrait = dict(top=116, right=0, bottom=34, left=0)
+        landscape = dict(top=78, right=62, bottom=20, left=62)
+        events = [
+            dict(event='native-insets', nativeMs=10, insets=portrait),
+            dict(event='initial', nativeMs=20, strategy='preprime', env=portrait, effective=portrait, nativeAtReceipt=portrait),
+            dict(event='native-insets', nativeMs=100, insets=landscape),
+            dict(event='insets-change', nativeMs=110, env=portrait, effective=landscape, nativeAtReceipt=landscape),
+            dict(event='insets-change', nativeMs=125, env=landscape, effective=landscape, nativeAtReceipt=landscape),
+        ]
+        self.assertEqual(summary.settle(events, 'env'), '25')
+        self.assertEqual(summary.settle(events, 'effective'), '10')
+        self.assertEqual(summary.settle(events[:4], 'env'), 'NEVER')
+
 
 if __name__ == '__main__':
     unittest.main()

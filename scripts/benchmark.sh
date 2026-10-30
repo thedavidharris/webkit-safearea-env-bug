@@ -12,6 +12,8 @@ RUN_SECONDS="${RUN_SECONDS:-10}"
 PRIME_TIMEOUT="${PRIME_TIMEOUT:-3}"
 STRATEGIES="${STRATEGIES:-none inject prewarm both prime preprime}"
 RECORD_VIDEO="${RECORD_VIDEO:-0}"
+PERTURB="${PERTURB:-}"
+PERTURB_DELAY="${PERTURB_DELAY:-0}"
 APP_ID=Chet-Corcos.WebViewBug
 case "$RUNS" in ''|*[!0-9]*|0) echo 'Runs must be a positive integer' >&2; exit 1;; esac
 python3 - "$AUTO_PUSH_DELAY" "$RUN_SECONDS" "$PRIME_TIMEOUT" <<'PY'
@@ -23,7 +25,7 @@ assert delay >= 0 and 0 < timeout <= 30, 'Invalid delay or prime timeout'
 assert duration > delay + timeout + 2, 'RUN_SECONDS must leave at least 2s after push + priming timeout'
 PY
 for strategy in $STRATEGIES; do
-  case "$strategy" in none|inject|prewarm|both|prime|preprime) ;; *) echo "Unknown strategy: $strategy" >&2; exit 1;; esac
+  case "$strategy" in none|inject|prewarm|both|prime|preprime|preprime-inject) ;; *) echo "Unknown strategy: $strategy" >&2; exit 1;; esac
 done
 if ! curl -fsS -o /dev/null "$PAGE_URL"; then
   echo "Start the page server: python3 -m http.server 8000" >&2
@@ -49,6 +51,7 @@ trap 'exit 143' TERM
   xcrun simctl list devices booted
   echo "Device=$DEVICE Runs=$RUNS Strategies=$STRATEGIES"
   echo "Page=$PAGE_URL AutoPushDelay=$AUTO_PUSH_DELAY RunSeconds=$RUN_SECONDS PrimeTimeout=$PRIME_TIMEOUT Video=$RECORD_VIDEO"
+  echo "Perturb=${PERTURB:-none} PerturbDelay=$PERTURB_DELAY"
 } > "$WORK/environment.txt"
 git diff > "$WORK/working-tree.diff"
 xcodebuild -project WebViewBug.xcodeproj -scheme WebViewBug \
@@ -66,9 +69,11 @@ for run in $(seq "$RUNS"); do
       xcrun simctl io "$DEVICE" recordVideo "$prefix.mp4" > "$prefix-video.txt" 2>&1 &
       recorder=$!
     fi
+    perturb_args=()
+    if [ -n "$PERTURB" ]; then perturb_args=(-perturb "$PERTURB" -perturbDelay "$PERTURB_DELAY"); fi
     xcrun simctl launch --console-pty "$DEVICE" "$APP_ID" \
       -strategy "$strategy" -autoPush YES -autoPushDelay "$AUTO_PUSH_DELAY" \
-      -primeTimeout "$PRIME_TIMEOUT" -pageURL "$PAGE_URL" > "$prefix.log" 2>&1 &
+      -primeTimeout "$PRIME_TIMEOUT" -pageURL "$PAGE_URL" "${perturb_args[@]+"${perturb_args[@]}"}" > "$prefix.log" 2>&1 &
     launcher=$!
     sleep "$RUN_SECONDS"
     xcrun simctl io "$DEVICE" screenshot "$prefix.png" > /dev/null 2>&1
