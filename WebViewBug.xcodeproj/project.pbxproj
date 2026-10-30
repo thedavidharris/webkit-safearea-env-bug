@@ -11,6 +11,8 @@
 		7B8D581021A4EC88006E5E9E /* WebViewBugApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B8D580021A4EC88006E5E9E /* WebViewBugApp.swift */; };
 		7B8D581121A4EC88006E5E9E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B8D580121A4EC88006E5E9E /* ContentView.swift */; };
 		7B8D581221A4EC88006E5E9E /* WebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B8D580221A4EC88006E5E9E /* WebView.swift */; };
+		7B8D582121A4EC88006E5E9E /* NativeSafeArea.js in Resources */ = {isa = PBXBuildFile; fileRef = 7B8D582021A4EC88006E5E9E /* NativeSafeArea.js */; };
+		7B8D582321A4EC88006E5E9E /* priming.html in Resources */ = {isa = PBXBuildFile; fileRef = 7B8D582221A4EC88006E5E9E /* priming.html */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -20,6 +22,8 @@
 		7B8D580021A4EC88006E5E9E /* WebViewBugApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewBugApp.swift; sourceTree = "<group>"; };
 		7B8D580121A4EC88006E5E9E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		7B8D580221A4EC88006E5E9E /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
+		7B8D582021A4EC88006E5E9E /* NativeSafeArea.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = NativeSafeArea.js; sourceTree = "<group>"; };
+		7B8D582221A4EC88006E5E9E /* priming.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = priming.html; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,6 +60,8 @@
 				7B8D580121A4EC88006E5E9E /* ContentView.swift */,
 				7B8D580221A4EC88006E5E9E /* WebView.swift */,
 				7B8D570421A4EC88006E5E9E /* Assets.xcassets */,
+				7B8D582021A4EC88006E5E9E /* NativeSafeArea.js */,
+				7B8D582221A4EC88006E5E9E /* priming.html */,
 				7B8D570921A4EC88006E5E9E /* Info.plist */,
 			);
 			path = WebViewBug;
@@ -119,6 +125,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7B8D582121A4EC88006E5E9E /* NativeSafeArea.js in Resources */,
+				7B8D582321A4EC88006E5E9E /* priming.html in Resources */,
 				7B8D570521A4EC88006E5E9E /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

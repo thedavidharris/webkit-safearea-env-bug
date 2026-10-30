@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head>
+<body>
+<script>
+const primingID = __PRIMING_ID_JSON__;
+const edges = ["top", "right", "bottom", "left"];
+const probe = document.createElement("div");
+probe.style.cssText = "position:fixed;visibility:hidden;pointer-events:none";
+for (const edge of edges) probe.style.setProperty(`padding-${edge}`, `env(safe-area-inset-${edge}, 0px)`);
+document.body.appendChild(probe);
+function sample() {
+    const style = getComputedStyle(probe);
+    const env = Object.fromEntries(edges.map(edge => [edge, parseFloat(style.getPropertyValue(`padding-${edge}`))]));
+    window.webkit?.messageHandlers?.probe?.postMessage({event: "prime-sample", primingID, env});
+    requestAnimationFrame(sample);
+}
+requestAnimationFrame(sample);
+</script>
+</body>
+</html>
