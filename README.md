@@ -1,93 +1,140 @@
-# WKWebView `env(safe-area-inset-*)` is 0 on first load
+# WKWebView safe-area values on initial navigation
 
-[WebKit bug 191872](https://bugs.webkit.org/show_bug.cgi?id=191872) (rdar://46193462), open since iOS 12 and still reproducible on iOS 27.
+A reproduction of delayed `env(safe-area-inset-*)` values in a full-bleed `WKWebView`, plus app-level workarounds and a measurement harness. Related: [WebKit bug 191872](https://bugs.webkit.org/show_bug.cgi?id=191872).
 
-A `WKWebView` that ignores the safe area (full-bleed content under a transparent nav bar) loads a page that uses `env(safe-area-inset-*)`. The page's first parse, first layout, `DOMContentLoaded`, `load`, and first animation frame all read 0. The real values arrive some time later, so anything positioned with them jumps.
+## Verification status
 
-This repo reproduces it in a SwiftUI app, measures it, and compares workarounds.
+Compiled and run on an iOS 27.2 iPhone simulator with Xcode 27.2 RC on 2026-10-30. The native bridge (`inject`) kept effective insets equal to native values at every probe checkpoint, through first load, bar transitions, rotation, in-page navigation, history restore and reopen. Physical-device, minimum-OS, keyboard, iPad and process-loss cases are not yet verified.
 
-## Running
+Results and the remaining test plan are in [docs/MAC_VERIFICATION.md](docs/MAC_VERIFICATION.md).
+
+## Run
+
+Requires Xcode with an installed iOS simulator runtime, Python 3, and optionally Node 18+ for the portable checks. The project deployment target is iOS 17.
 
 ```sh
-python3 -m http.server 8000   # serves index.html
-open WebViewBug.xcodeproj     # run on an iPhone simulator
+python3 -m http.server 8000
+open WebViewBug.xcodeproj
 ```
 
-Tap "Open WebView". The page has a full-bleed hero that starts behind the transparent nav bar. Its text should start at the dashed line, which marks the bottom of the nav bar. A fixed panel at the bottom shows `env()` and the injected `--native-safe-area-inset-*` values: live, and at first script, `DOMContentLoaded`, `load`, and first frame. Swipe up to hide the nav bar and watch the top inset change.
+Run on an iPhone simulator and tap **Open WebView**. The hero background extends behind the transparent navigation bar; its text uses the shared content-inset tokens. Swipe up/down to hide/show the navigation bar. The web buttons exercise reload and another same-origin document.
 
 Launch arguments (Xcode scheme or `simctl launch`):
 
-| Argument | Effect |
+| Argument | Meaning |
 |---|---|
-| `-strategy none\|inject\|prewarm\|both` | Workaround to use, see below. Default `both`. |
-| `-autoPush YES` | Pushes the web view without a tap, for scripted runs. |
+| `-strategy none` | Browser `env()` only; no injection or warm-up. |
+| `-strategy inject` | Native CSS values installed at document start. **Default.** |
+| `-strategy prewarm` | Reuse a web view warmed with empty HTML; no injection. Process-startup control. |
+| `-strategy both` | Empty-page prewarming plus injection. |
+| `-strategy prime` | In the destination container, load a `viewport-fit=cover` bootstrap, wait for measured inset agreement, then navigate. **Experimental; no injection.** |
+| `-autoPush YES` | Open the destination automatically. |
+| `-autoPushDelay 1` | Seconds before automatic push; use `0` to test immediate navigation. |
+| `-primeTimeout 3` | Priming deadline in seconds (maximum 30). Timeout/failure logs its outcome and loads the target normally. |
+| `-pageURL http://localhost:8000` | Test page address; override for a physical device or alternate test server. |
 
-Each measurement is also printed to the console as a `PROBE` line, with the time since the web view was created.
+`prime` accepts zero insets and requires two samples within 0.5 CSS px of unchanged native geometry on all four edges. This is a readiness observation, not a guarantee that the next navigation will preserve the state. Reparenting, policy changes and process replacement can invalidate it.
 
-```sh
-scripts/benchmark.sh <booted-simulator-udid> [runs-per-strategy]
-```
+## What the source supports
 
-The benchmark cold-launches each strategy N times and prints the first-script measurements.
+Source review pinned to [WebKit dcff9aa](https://github.com/WebKit/WebKit/tree/dcff9aa18012198f30524b519deea1f398babbe7), October 30, 2026. Main-branch source is not proof of the implementation shipped in any particular iOS build.
 
-## Root cause
+1. [`WKWebView.mm`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm) initializes `_avoidsUnsafeArea = YES`.
+2. In [`WKWebViewIOS.mm`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/UIProcess/API/ios/WKWebViewIOS.mm), `_computedUnobscuredSafeAreaInset` normally returns zero while that policy is active. `.never` scroll-inset adjustment does not directly change the policy.
+3. [`ViewportConfiguration.cpp`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebCore/page/ViewportConfiguration.cpp) derives `avoidsUnsafeArea` from `viewportFit != Cover`. The web process returns this policy in rendering-commit data; native applies it and schedules a visible-rectangle update.
+4. Those updates carry the computed insets and can be deferred during navigation or unstable geometry. [`WebPageCocoa.mm`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/WebProcess/WebPage/Cocoa/WebPageCocoa.mm) can also reject updates older than the current navigation's commit boundary.
+5. [`Page.cpp`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebCore/page/Page.cpp) and [`StyleEnvironmentVariables.cpp`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebCore/style/StyleEnvironmentVariables.cpp) propagate changed values into CSS and invalidate style.
 
-This comes from reading WebKit source (`Source/WebKit/UIProcess/API/ios/WKWebViewIOS.mm` and related files) and has not been confirmed with a debugger.
+This supports a viewport-policy/geometry round-trip explanation for initial zeros. It does not prove which branch caused a particular observed run without tracing that build.
 
-- The safe-area insets reach the web process only inside a `VisibleContentRectUpdateInfo`. `-[WKWebView _createVisibleContentRectUpdate]` builds it from `_computedUnobscuredSafeAreaInset`, and WebKit sends it from a CATransaction pre-commit handler. `WebPageCreationParameters` carries `obscuredContentInsets` but no safe-area insets, so a new page starts with zero.
-- `WebPageProxy::updateVisibleContentRects` only caches the update when no web process is running (`hasRunningProcess()` is false). After the first layer tree commit for a new load, `WebPageProxyCocoa.mm` clears that cache (`lastVisibleContentRectUpdate = { }`).
-- `_updateVisibleContentRects` also returns early in several "unstable" states (`_shouldDeferGeometryUpdates`, a pending `resetViewStateAfterTransactionID` after a main-frame commit, keyboard inset adjustment, and others). Those states are common during the first navigation.
-- On the web-process side, `WebPage::updateVisibleContentRects` calls `Page::setUnobscuredSafeAreaInsets`. That updates the CSS environment variables and forces a style recalc on every document.
+Corrections to the original explanation:
 
-So the first page is parsed and laid out before any update reaches its process, and `env()` is 0 until a later update gets through. Safari doesn't show the bug in practice because its view is already on screen and laid out by the time a page loads.
+- `WebPageProxy::updateVisibleContentRects` caches accepted updates **before** checking for a running process. Without a process, it skips sending. See [`WebPageProxyCocoa.mm`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/UIProcess/Cocoa/WebPageProxyCocoa.mm).
+- Clearing that UI-process cache after a commit does not itself reset WebCore's safe-area values.
+- Visible-rectangle updates are not the only delivery path: dynamic viewport-size updates also carry the insets in [`WebPageIOS.mm`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/WebProcess/WebPage/ios/WebPageIOS.mm).
+- Being in a window does not establish final native geometry. The sample now requires attachment plus nonempty bounds, publishes on layout/safe-area changes, and still needs transition testing.
+- The original empty warm-up page has no `viewport-fit=cover`. A warm process alone does not establish the target viewport policy. A process swap is possible but was not demonstrated by the measurements.
+- Safari's reported refresh behavior is a comparison, not a universal guarantee.
 
-## Measurements
+## Approaches
 
-iPhone 18 Pro Max simulator, iOS 27.0. 5 cold launches per strategy, web view pushed under an inline nav bar. Native insets: top 116 (status bar plus nav bar), bottom 34.
+### 1. Native inset bridge — preferred for content the app owns
 
-| Strategy | Time to first script | `env()` at first script, `DOMContentLoaded`, `load`, first frame | `--native-*` |
-|---|---|---|---|
-| `none` | 706 to 1,614 ms | all 0 | n/a |
-| `inject` | 693 to 1,411 ms | all 0 | 116 / 34 |
-| `prewarm` | 58 to 86 ms | all 0 | n/a |
-| `both` | 56 to 73 ms | all 0 | 116 / 34 |
-
-`env()` reached the correct values only after `load`, in every strategy.
-
-## Routes to a fix
-
-### 1. Inject the insets yourself (used here)
-
-`InsetAwareWebView` in `WebViewBug/WebView.swift` waits until it is in a window, so `safeAreaInsets` is final. It then installs an `.atDocumentStart` user script that adopts a stylesheet defining `--native-safe-area-inset-{top,right,bottom,left}`, and updates it from `safeAreaInsetsDidChange`. Page CSS uses:
+`InsetAwareWebView` captures the web view's native insets and installs `NativeSafeArea.js` as a main-frame `.atDocumentStart` user script before loading. Apple documents that the document element exists at that point, so the script sets custom properties directly on it.
 
 ```css
-padding-top: max(env(safe-area-inset-top), var(--native-safe-area-inset-top, 0px));
+:root {
+  --inset-top: var(--native-safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --inset-right: var(--native-safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --inset-bottom: var(--native-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --inset-left: var(--native-safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
 ```
 
-- Correct from the first layout, with no measurable load cost.
-- Safari and other hosts fall back to `env()`.
-- No jump when `env()` catches up, because both report the same values.
-- Only CSS you control benefits. Third-party CSS still sees 0 on the first layout.
-- It only swaps its own `WKUserScript`, so other user scripts are kept.
+Native values take precedence, including zero. `max(env(...), native)` can retain an obsolete larger `env()` value after a bar hides; it is intentionally removed. Browsers without the bridge use `env()`.
 
-### 2. Pre-warm a web view (used here, for speed)
+The initial values are installed synchronously; a document-ready message reconciles newer geometry without making initial CSS wait for a native reply. Document IDs and monotonic revisions reject stale updates. Commit/finish callbacks provide additional reconciliation, not an initial-paint guarantee. JavaScript errors are logged. The handler holds the view weakly.
 
-`WebViewPool` creates a web view early, parks it invisibly in the key window, and loads an empty document on the target origin. It hands that web view over on push, which moves process launch off the tap: about 10x faster to first script.
+The sample rebuilds its owned `WKUserScript` before the other scripts while preserving their relative order. It still uses `removeAllUserScripts` plus re-addition because the public API has no remove-one operation. An app integration should centralize registration, avoid sharing this content controller between web views, and test navigation concurrent with script updates.
 
-Pre-warming does not fix `env()`: the warm process still reads 0 for the real page's first layout. Why is unexplained. Likely suspects are a process swap on navigation, or per-page state being reset on the main-frame commit (`resetViewStateAfterTransactionID`).
+**Contract:** these are app-owned content-clearance insets for a full-bleed page with `viewport-fit=cover` and `.never` scroll adjustment. They are not a universal polyfill for WebKit `env()`. Only migrated CSS benefits. Iframes and third-party CSS that directly read `env()` are unchanged. Avoid double-counting native content insets, treat keyboard avoidance separately, and validate zoom/viewport behavior for your actual pages. Native geometry changes can still arrive after the first render.
 
-### 3. Prime with a blank load, then load the real page (rejected)
+### 2. Prewarm — performance experiment
 
-Load a same-origin document that polls `env()` until it matches the native insets, then load the real URL. This made `env()` correct at first script in every run. It was rejected because it adds a full navigation plus at least one frame to the critical path of every first load.
+The scene-owned pool warms empty HTML in the actual hosting window, rather than selecting a global key window. This intentionally preserves the original process-only comparison. `both` adds the bridge.
 
-### 4. Hide the UI until `load` (does not work)
+The pool is a small demonstration, not a general production pool. Account for configuration/data-store compatibility, memory pressure, unused views, scene teardown, and process loss in an app integration. `baseURL` does not contractually guarantee process reuse.
 
-An earlier idea was to keep the web UI hidden until `window.onload` / `document.readyState === "complete"`. The measurements show `env()` is still 0 at `load`, so this is not reliable.
+### 3. Prime viewport policy and geometry — now reproducible
 
-### 5. Fix WebKit
+`prime` loads the bundled `priming.html` in the destination web view. It declares `viewport-fit=cover` and samples real CSS `env()` values on animation frames. Native checks agreement against the destination's current geometry, then loads the target. A three-second default deadline prevents an indefinite wait.
 
-The direct fix is to include the unobscured safe-area insets in `WebPageCreationParameters`, filled from `_computedUnobscuredSafeAreaInset`. They would be applied in the `WebPage` constructor next to `setObscuredContentInsets` (`WebPage.cpp`), including on process-swap reinitialization. A narrower option is to send the insets on their own when they change, independent of visible-rect deferral. Either needs a TestWebKitAPI test that reads `env(safe-area-inset-top)` from an inline script in a view with non-zero safe-area insets.
+This pays a bootstrap navigation on the critical path. Pre-priming before a tap is a separate future experiment and needs representative destination geometry. A `prime-ready` event only describes the bootstrap; inspect the real page's checkpoints and presentation separately. A timeout/failure falls back to ordinary navigation and must never be reported as successful priming.
 
-## Recommendation
+### 4. Delay presentation
 
-For an app that needs fast, correct full-bleed web content today: pre-warm for speed, and inject the insets for correct initial layout (`-strategy both`).
+`load`/`didFinish`/a fixed delay are not safe-area readiness signals. A measured-readiness gate could be a fallback for unmodifiable content, with a deadline and loading UI. It is not implemented here and would need to keep the web view participating in rendering. Valid zero insets must be allowed.
+
+### 5. Upstream WebKit fix
+
+[`WebPageCreationParameters.h`](https://github.com/WebKit/WebKit/blob/dcff9aa18012198f30524b519deea1f398babbe7/Source/WebKit/Shared/WebPageCreationParameters.h) lacks initial safe-area geometry. Adding it may help, but populating it from `_computedUnobscuredSafeAreaInset` alone can still copy zero under the initial policy.
+
+A patch must coordinate early host geometry and the document's viewport policy without waiting for a rendering round trip, and handle later attachment, navigation and process replacement. Independent inset IPC might reduce deferral but does not alone guarantee ordering before first layout. Add TestWebKitAPI coverage for an early inline read after the viewport declaration, policy transitions, inset decreases and process changes. No upstream patch has been implemented or validated here. Private WebKit setters are not an app-level solution.
+
+## Measurements and their limits
+
+```sh
+scripts/benchmark.sh <booted-simulator-udid> 5 benchmark-results/baseline
+AUTO_PUSH_DELAY=0 scripts/benchmark.sh <booted-simulator-udid> 5 benchmark-results/immediate
+RECORD_VIDEO=1 scripts/benchmark.sh <booted-simulator-udid> 2 benchmark-results/video
+```
+
+The harness interleaves strategies, stores the environment and working diff, retains complete JSON `PROBE` logs, captures end-of-run screenshots, optionally records video, and writes `summary.md`. `scripts/summarize.py` can regenerate the summary. Missing initial probes and priming timeouts are explicit.
+
+Native milliseconds start at destination coordinator creation; prewarming before that is excluded. Page milliseconds use the document's `performance.now()`. Native-at-receipt is later than JS capture. Cold app launches are not necessarily cold OS/WebKit caches. The one-second automatic-push delay gives warm-up a head start; compare the zero-delay run too.
+
+The page records `initial` (head script after viewport/style, before body), `dom`, `load`, `frame`, `pageshow`, and inset-change checkpoints, plus effective CSS values and available element rectangles. `frame` is an animation-frame callback, not evidence of a displayed frame. Instrumentation forces style resolution and can affect timing. Video and device observation are still required to evaluate visible jumps.
+
+### Historical results — original implementation only
+
+The original README reported five cold app launches per strategy on an iPhone 18 Pro Max simulator with iOS 27.0, native top/bottom 116/34:
+
+| Original strategy | Time to initial script | `env()` at initial/dom/load/frame | Injected top/bottom |
+|---|---|---|---|
+| none | 706–1,614 ms | zero | n/a |
+| inject | 693–1,411 ms | zero | 116/34 |
+| prewarm | 58–86 ms | zero | n/a |
+| both | 56–73 ms | zero | 116/34 |
+
+These are previously reported results, not rerun here. The initial probe, CSS, bridge and harness have changed; do not mix the datasets. Raw historical logs are not checked in. The earlier successful priming claim also lacked a checked-in implementation and logs; validate the new strategy independently.
+
+## Portable checks
+
+```sh
+node --test tests/bridge.test.cjs
+python3 -m unittest discover -s tests
+bash -n scripts/benchmark.sh
+git diff --check
+```
+
+See [MAC_VERIFICATION.md](docs/MAC_VERIFICATION.md) for the required native and visual checks and the evidence needed to choose an app strategy.
